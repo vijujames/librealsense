@@ -1,6 +1,7 @@
 // License: Apache 2.0. See LICENSE file in root directory.
 // Copyright(c) 2019 Intel Corporation. All Rights Reserved.
 
+#include <unistd.h>
 #include <librealsense2/rs.hpp>   // Include RealSense Cross Platform API
 
 #include "cv-helpers.hpp"         // frame_to_mat
@@ -207,8 +208,30 @@ int main(int argc, char * argv[]) try
     rs2::log_to_console( RS2_LOG_SEVERITY_WARN );    // only warnings (and above) should come through
 
     // Declare RealSense pipeline, encapsulating the actual device and sensors
+
+    // Use streaming
+    // rs2::pipeline pipe;
+    // pipe.start();
+
+    // Stream from recording // Viju
+LOG(INFO) << "Before file load";
     rs2::pipeline pipe;
-    pipe.start();
+    rs2::config cfg;
+    rs2::device device;
+    rs2::pipeline_profile pipeline_profile;
+    
+    // enable file playback with playback repeat disabled    
+    cfg.enable_device_from_file("/home/osboxes/rosbags/recordings/realsense_20200427_171437.bag", false);
+    
+    // start pipeline and get device
+    pipeline_profile = pipe.start(cfg);
+    device = pipeline_profile.get_device();
+
+    // get playback device and disable realtime mode
+    auto playback = device.as<rs2::playback>();
+    playback.set_real_time( false );
+LOG(INFO) << "After file load";
+
     rs2::align align_to( RS2_STREAM_COLOR );
 
     // Start the inference engine, needed to accomplish anything. We also add a CPU extension, allowing
@@ -241,8 +264,12 @@ int main(int argc, char * argv[]) try
     LOG(INFO) << "Current detector set to (" << current_detector+1 << ") \"" << openvino_helpers::remove_ext( p_detector->pathToModel ) << "\"";
     auto p_labels = &detectors[current_detector].labels;
 
-    const auto window_name = "OpenVINO DNN sample";
+    const auto window_name = "OpenVINO DNN Color Image";
     cv::namedWindow( window_name, cv::WINDOW_AUTOSIZE );
+
+    // Viju for depth image
+    const auto window_name_depth = "OpenVINO DNN Depth Image";
+    cv::namedWindow( window_name_depth, cv::WINDOW_AUTOSIZE );
 
     cv::Mat prev_image;
     openvino_helpers::detected_objects objects;
@@ -250,17 +277,33 @@ int main(int argc, char * argv[]) try
     uint64 last_frame_number = 0;
     high_resolution_clock::time_point switch_time = high_resolution_clock::now();
 
+	rs2::colorizer color_map;  //Viju
     while( cv::getWindowProperty( window_name, cv::WND_PROP_AUTOSIZE ) >= 0 )
     {
+LOG(INFO) << "Inside while";
         // Wait for the next set of frames
-        auto frames = pipe.wait_for_frames();
+        //auto frames = pipe.wait_for_frames();
+
+	rs2::frameset frames;
+	if (!pipe.poll_for_frames(&frames)) {
+		usleep(10000);
+		continue;
+	}
+
+        //pipe.poll_for_frames(&frames); // from file
+LOG(INFO) << "After continue";
+
         // Make sure the frames are spatially aligned
         frames = align_to.process( frames );
 
         auto color_frame = frames.get_color_frame();
         auto depth_frame = frames.get_depth_frame();
+        auto depth_frame_color = frames.get_depth_frame().apply_filter(color_map); // Viju
+
         if( ! color_frame  ||  ! depth_frame )
             continue;
+
+LOG(INFO) << "After color and depth check";
 
         // If we only received a new depth frame, but the color did not update, continue
         if( color_frame.get_frame_number() == last_frame_number )
@@ -268,6 +311,8 @@ int main(int argc, char * argv[]) try
         last_frame_number = color_frame.get_frame_number();
 
         auto image = frame_to_mat( color_frame );
+	auto depth_image = frame_to_mat( depth_frame_color ); //Viju
+
 
         // We process the previous frame so if this is our first then queue it and continue
         if( ! p_detector->_request )
@@ -296,6 +341,10 @@ int main(int argc, char * argv[]) try
         draw_objects( image, depth_frame, objects );
         draw_detector_overlay( image, current_detector, switch_time );
         imshow( window_name, image );
+	// Viju for depth image
+        draw_objects( depth_image, depth_frame, objects );
+        draw_detector_overlay( depth_image, current_detector, switch_time );
+	imshow(window_name_depth, depth_image); 
 
         // Handle the keyboard before moving to the next frame
         const int key = cv::waitKey( 1 );
