@@ -186,6 +186,16 @@ double get_actual_height(double angled_height, double angled_distance) {
     return (yb + yt);
 }
 
+double get_actual_distance(double angled_height, double angled_distance, double actual_height) {
+    double angle_rad = 10 * 0.0174533;
+
+    double actual_angle_rad = atan(angled_height / angled_distance) + angle_rad;
+    double actual_distance = actual_height / tan (actual_angle_rad);
+
+
+    return actual_distance;
+}
+
 /*
     Draws the edge of the curb
 */
@@ -196,6 +206,7 @@ void draw_curb(
     rs2_intrinsics DepthIntrinsics
 )
 {
+    const double DISTANCE_THRESHOLD = 6.0;
     float ResultVector[3];
     float InputPixelAsFloat[2];
 
@@ -210,27 +221,32 @@ void draw_curb(
     auto center_width = width/2;
 
     double prev_height = 0.0;
-    for (int y = height-1; y > 0; y-=10) {
+    for (int y = height-1; y > 0; y-=13) {
         InputPixelAsFloat[0] = center_width;
         InputPixelAsFloat[1] = y;
-        auto distance = depth_frame.get_distance( center_width, y );
+        auto angled_distance = depth_frame.get_distance( center_width, y );
 
-        if (distance) {
-            rs2_deproject_pixel_to_point(ResultVector, &DepthIntrinsics, InputPixelAsFloat, distance);
+        if (angled_distance) {
+            rs2_deproject_pixel_to_point(ResultVector, &DepthIntrinsics, InputPixelAsFloat, angled_distance);
 
-            double actual_height = get_actual_height(ResultVector[1], distance);
-            std::cout << "x = " << ResultVector[0] << ", y = " << ResultVector[1] << ", z = " << ResultVector[2] << std::endl << ", actual_height = " << actual_height;
+            double actual_height = get_actual_height(ResultVector[1], angled_distance);
+            double actual_distance = get_actual_distance(ResultVector[1], angled_distance, actual_height);
+            std::cout << "actual_height = " << actual_height << ", actual_distance = " << actual_distance;
+            if (actual_distance > DISTANCE_THRESHOLD) continue;
+
 
             std::ostringstream ss;
-            ss << std::setprecision( 2 ) << actual_height;
-            ss << " meters high";
+            ss << " actual_height : " << std::setprecision( 2 ) << actual_height;
+            ss << " actual_distance : " << std::setprecision( 2 ) << actual_distance;
             cv::putText( image, ss.str(), cv::Point( center_width, y ), cv::FONT_HERSHEY_SIMPLEX, 0.4, white );
+
 
             if (prev_height != 0.0 && actual_height > 0 && (prev_height-actual_height > 0.19) &&  (prev_height-actual_height < 0.28)) {
                 cv::Point pt( center_width, y );
                 cv::circle(image, pt, 3, red, 2);
                 break;
             }
+
             prev_height = actual_height;
         }
     }
@@ -271,6 +287,30 @@ int main(int argc, char * argv[]) try
     rs2::pointcloud pc;
     // We want the points object to be persistent so we can display the last cloud when a frame drops
     rs2::points points;
+
+    // Decimation filter reduces the amount of data (while preserving best samples)
+    rs2::decimation_filter dec;
+    // If the demo is too slow, make sure you run in Release (-DCMAKE_BUILD_TYPE=Release)
+    // but you can also increase the following parameter to decimate depth more (reducing quality)
+    dec.set_option(RS2_OPTION_FILTER_MAGNITUDE, 2);
+    // Define transformations from and to Disparity domain
+    rs2::disparity_transform depth2disparity;
+    rs2::disparity_transform disparity2depth(false);
+    // Define spatial filter (edge-preserving)
+    rs2::spatial_filter spat;
+    // Enable hole-filling
+    // Hole filling is an aggressive heuristic and it gets the depth wrong many times
+    // However, this demo is not built to handle holes
+    // (the shortest-path will always prefer to "cut" through the holes since they have zero 3D distance)
+    spat.set_option(RS2_OPTION_HOLES_FILL, 5); // 5 = fill all the zero pixels
+    // Define temporal filter
+    rs2::temporal_filter temp;
+    // Spatially align all streams to depth viewport
+    // We do this because:
+    //   a. Usually depth has wider FOV, and we only really need depth for this demo
+    //   b. We don't want to introduce new holes
+//    rs2::align align_to(RS2_STREAM_DEPTH);
+
 
     el::Configurations conf;
     conf.set( el::Level::Global, el::ConfigurationType::Format, "[%level] %msg" );
@@ -361,14 +401,35 @@ LOG(INFO) << "Inside while";
 		continue;
 	}
 
-        // Make sure the frames are spatially aligned
-        frames = align_to.process( frames );
+        // Make sure the frames are spatially aligned (ORIGINAL)
+ //       frames = align_to.process( frames );
+        // First make the frames spatially aligned
+        frames = frames.apply_filter(align_to);
+/*
+        // Decimation will reduce the resultion of the depth image,
+        // closing small holes and speeding-up the algorithm
+//        frames = dec.process(frames);
+        // To make sure far-away objects are filtered proportionally
+        // we try to switch to disparity domain
+        frames = depth2disparity.process(frames);
+        // Apply spatial filtering
+        frames = spat.process(frames);
+        // Apply temporal filtering
+        frames = temp.process(frames);
+        // If we are in disparity domain, switch back to depth
+        frames = disparity2depth.process(frames);
+*/
+
 
         auto color_frame = frames.get_color_frame();
         auto depth_frame = frames.get_depth_frame();
 
         if( ! color_frame  ||  ! depth_frame )
             continue;
+
+
+
+
 
         // If we only received a new depth frame, but the color did not update, continue
         if( color_frame.get_frame_number() == last_frame_number )
@@ -396,7 +457,7 @@ LOG(INFO) << "Inside while";
         p_detector->submit_request();
 
         // MAIN DETECTION
-        detect_objects( image, results, *p_labels, id, objects );
+//        detect_objects( image, results, *p_labels, id, objects );
 
         // Keep it alive so we can actually process pieces of it once we have the results
         prev_image = image;
@@ -407,8 +468,8 @@ LOG(INFO) << "Inside while";
         points = pc.calculate(depth_frame);
 
         // Display the results (from the last frame) as rectangles on top (of the current frame)
-        draw_objects( image, depth_frame, objects );
-        draw_detector_overlay( image, current_detector, switch_time );
+//        draw_objects( image, depth_frame, objects );
+//        draw_detector_overlay( image, current_detector, switch_time );
         draw_curb( image, depth_frame, points, DepthIntrinsics );
         imshow( window_name, image );
 
