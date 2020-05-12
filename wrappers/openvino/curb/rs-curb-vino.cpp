@@ -3,6 +3,7 @@
 
 #include <unistd.h>
 #include <math.h>
+
 #include <librealsense2/rs.hpp>   // Include RealSense Cross Platform API
 #include <librealsense2/rsutil.h> // rs2_deproject_pixel_to_point
 
@@ -176,7 +177,7 @@ void draw_objects(
 }
 
 double get_actual_height(double angled_height, double angled_distance) {
-    double angle_rad = 10 * 0.0174533;
+    double angle_rad = 20 * 0.0174533;
 
     double yb = angled_height / cos(angle_rad);
     double z2 = sin(angle_rad) * yb;
@@ -187,13 +188,105 @@ double get_actual_height(double angled_height, double angled_distance) {
 }
 
 double get_actual_distance(double angled_height, double angled_distance, double actual_height) {
-    double angle_rad = 10 * 0.0174533;
+    double angle_rad = 20 * 0.0174533;
 
     double actual_angle_rad = atan(angled_height / angled_distance) + angle_rad;
     double actual_distance = actual_height / tan (actual_angle_rad);
 
 
     return actual_distance;
+}
+
+/**
+ * @brief Calculate the actual vertical height of the given point from the camera and the horizontal
+ * distance of the point from the camera
+ * @param image_x x coordinate of the 2D point in the depth frame
+ * @param image_y y cordinate of the 2D point in the depth frame
+ * @param depth_frame The depth frame
+ * @param DepthIntrinsics
+ * @param actual_height address of the double value to return
+ * @param actual_distance address of the double value to return
+ */
+void get_actual_height_and_distance(float image_x, float image_y, rs2::depth_frame depth_frame,
+                                    rs2_intrinsics DepthIntrinsics, double *actual_height, double *actual_distance) {
+     float ResultVector[3];
+     float InputPixelAsFloat[2] = {image_x, image_y};
+
+     auto angled_distance = depth_frame.get_distance( image_x, image_y );
+     if (angled_distance) {
+         rs2_deproject_pixel_to_point(ResultVector, &DepthIntrinsics, InputPixelAsFloat, angled_distance);
+
+         *actual_height = get_actual_height(ResultVector[1], angled_distance);
+         *actual_distance = get_actual_distance(ResultVector[1], angled_distance, *actual_height);
+     }
+}
+
+cv::Point get_curb_point(int height, double image_x, rs2::depth_frame depth_frame, rs2_intrinsics DepthIntrinsics, cv::Mat& image) {
+    const int IMAGE_X_STEP_SIZE = 15;
+    const int CAMERA_BOTTOM_OFFSET = 60;
+    const double GROUD_HEIGHT = 1.7;
+    const double DISTANCE_MAX = 5.8;
+    const double DISTANCE_MIN = 4.2;
+    const double CURB_HEIGHT_MAX = 0.172;
+    const double CURB_HEIGHT_MIN = 0.132;
+    cv::Scalar const white( 255, 255, 255 );  // BGR
+
+    double prev_height = 0.0;
+    double actual_height = 0.0;
+    double actual_distance = 0.0;
+    for (int image_y = height-CAMERA_BOTTOM_OFFSET; image_y > 0; image_y-=IMAGE_X_STEP_SIZE) {
+        get_actual_height_and_distance(image_x, image_y, depth_frame, DepthIntrinsics, &actual_height, &actual_distance);
+        if (actual_distance > DISTANCE_MAX || actual_distance < DISTANCE_MIN) continue;
+/*
+        if (image_x > 310 && image_x < 330) {
+            std::ostringstream ss;
+            ss << " : " << std::setprecision( 2 ) << actual_height;
+            ss << " : " << std::setprecision( 2 ) << actual_distance;
+            cv::putText( image, ss.str(), cv::Point( image_x, image_y ), cv::FONT_HERSHEY_SIMPLEX, 0.4, white );
+        }
+*/
+
+        if (prev_height != 0.0 && actual_height > 0
+                && (prev_height-actual_height < (CURB_HEIGHT_MAX))
+                && (prev_height-actual_height > (CURB_HEIGHT_MIN))
+                && actual_height < (GROUD_HEIGHT-CURB_HEIGHT_MIN)
+                ) {
+/*
+            // Check next point as well so as to remove erroneous points
+            if (image_y-13 > 0) {
+                double next_actual_height, next_actual_distance;
+                get_actual_height_and_distance(image_x, image_y-13, depth_frame, DepthIntrinsics, &next_actual_height, &next_actual_distance);
+
+                if (abs(next_actual_height - actual_height) > 0.08) break;
+            }
+*/
+            cv::Point pt( image_x, image_y );
+            return pt;
+        }
+
+        prev_height = actual_height;
+    }
+
+    cv::Point pt_origin( 0, 0);
+    return pt_origin;
+
+}
+
+void draw_fitted_line(cv::Mat& image, std::vector<cv::Point> curb_points, int width, int height) {
+    cv::Point pt1, pt2;
+    cv::Vec4f line;
+    float d, t;
+
+    if (curb_points.size() >= 2) {
+        // find the optimal line
+        cv::fitLine(curb_points, line, cv::DIST_L1, 1, 0.001, 0.001);
+
+        pt1.x = curb_points[0].x;
+        pt1.y = line[3];
+        pt2.x = curb_points[curb_points.size()-1].x;
+        pt2.y = line[3];
+        cv::line(image, pt1, pt2, cv::Scalar(0, 255, 0), 3);
+    }
 }
 
 /*
@@ -206,54 +299,24 @@ void draw_curb(
     rs2_intrinsics DepthIntrinsics
 )
 {
-    const double DISTANCE_THRESHOLD = 6.0;
-    float ResultVector[3];
-    float InputPixelAsFloat[2];
-
     cv::Scalar const green( 0, 255, 0 );  // BGR
     cv::Scalar const red( 0, 0, 255 );  // BGR
     cv::Scalar const white( 255, 255, 255 );  // BGR
+
+    std::vector<cv::Point> curb_points;
 
     //auto depth_image = frame_to_mat( depth_frame );
     int width = image.cols;
     int height = image.rows;
     LOG(INFO) << "width=" << width << " height=" << height;
-    auto center_width = width/2;
 
-    double prev_height = 0.0;
-    for (int y = height-1; y > 0; y-=13) {
-        InputPixelAsFloat[0] = center_width;
-        InputPixelAsFloat[1] = y;
-        auto angled_distance = depth_frame.get_distance( center_width, y );
-
-        if (angled_distance) {
-            rs2_deproject_pixel_to_point(ResultVector, &DepthIntrinsics, InputPixelAsFloat, angled_distance);
-
-            double actual_height = get_actual_height(ResultVector[1], angled_distance);
-            double actual_distance = get_actual_distance(ResultVector[1], angled_distance, actual_height);
-            std::cout << "actual_height = " << actual_height << ", actual_distance = " << actual_distance;
-            if (actual_distance > DISTANCE_THRESHOLD) continue;
-
-
-            std::ostringstream ss;
-            ss << " actual_height : " << std::setprecision( 2 ) << actual_height;
-            ss << " actual_distance : " << std::setprecision( 2 ) << actual_distance;
-            cv::putText( image, ss.str(), cv::Point( center_width, y ), cv::FONT_HERSHEY_SIMPLEX, 0.4, white );
-
-
-            if (prev_height != 0.0 && actual_height > 0 && (prev_height-actual_height > 0.19) &&  (prev_height-actual_height < 0.28)) {
-                cv::Point pt( center_width, y );
-                cv::circle(image, pt, 3, red, 2);
-                break;
-            }
-
-            prev_height = actual_height;
-        }
+    for (auto image_x = 0; image_x < width; image_x+=10) {
+        cv::Point pt = get_curb_point(height, image_x, depth_frame, DepthIntrinsics, image);
+        if (pt.x == 0 &&pt.y == 0) continue;
+        curb_points.push_back(pt);
+        cv::circle(image, pt, 3, red, 2);
     }
-
-    cv::Point pt1( 100, 50 );
-    cv::Point pt2( 200, 100 );
-    cv::line( image, pt1, pt2, red, 2 );
+    draw_fitted_line(image, curb_points, width, height);
 }
 
 /*
@@ -332,7 +395,8 @@ LOG(INFO) << "Before file load";
     rs2::pipeline_profile pipeline_profile;
     
     // enable file playback with playback repeat disabled    
-    cfg.enable_device_from_file("/home/osboxes/rosbags/recordings/realsense_20200427_171437.bag", false);
+    // realsense_20200427_171437.bag
+    cfg.enable_device_from_file("/home/osboxes/rosbags/recordings/20200501_173833.bag", false);
     
     // start pipeline and get device
     pipeline_profile = pipe.start(cfg);
@@ -391,7 +455,6 @@ LOG(INFO) << "After file load";
 	rs2::colorizer color_map;  //Viju
     while( cv::getWindowProperty( window_name, cv::WND_PROP_AUTOSIZE ) >= 0 )
     {
-LOG(INFO) << "Inside while";
         // Wait for the next set of frames
         //auto frames = pipe.wait_for_frames();
 
