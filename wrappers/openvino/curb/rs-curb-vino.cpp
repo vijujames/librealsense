@@ -177,7 +177,7 @@ void draw_objects(
 }
 
 double get_actual_height(double angled_height, double angled_distance) {
-    double angle_rad = 20 * 0.0174533;
+    double angle_rad = 15 * 0.0174533; // 20 * 0.0174533
 
     double yb = angled_height / cos(angle_rad);
     double z2 = sin(angle_rad) * yb;
@@ -188,7 +188,7 @@ double get_actual_height(double angled_height, double angled_distance) {
 }
 
 double get_actual_distance(double angled_height, double angled_distance, double actual_height) {
-    double angle_rad = 20 * 0.0174533;
+    double angle_rad = 15 * 0.0174533; // 20 * 0.0174533
 
     double actual_angle_rad = atan(angled_height / angled_distance) + angle_rad;
     double actual_distance = actual_height / tan (actual_angle_rad);
@@ -224,8 +224,8 @@ void get_actual_height_and_distance(float image_x, float image_y, rs2::depth_fra
 cv::Point get_curb_point(int height, double image_x, rs2::depth_frame depth_frame, rs2_intrinsics DepthIntrinsics, cv::Mat& image) {
     const int IMAGE_X_STEP_SIZE = 15;
     const int CAMERA_BOTTOM_OFFSET = 60;
-    const double GROUD_HEIGHT = 1.7;
-    const double DISTANCE_MAX = 5.8;
+    const double GROUD_HEIGHT = 2.0; // 1.7
+    const double DISTANCE_MAX = 6.0;
     const double DISTANCE_MIN = 4.2;
     const double CURB_HEIGHT_MAX = 0.172;
     const double CURB_HEIGHT_MIN = 0.132;
