@@ -158,6 +158,7 @@ void draw_objects(
     
     for( auto && object : objects )
     {
+        if (object->get_label() == "") continue;
         auto r = object->get_location();
         cv::rectangle( image, r, green );
 
@@ -176,8 +177,14 @@ void draw_objects(
     }
 }
 
+/** VIJU
+ * @brief Calculate the vertical height given the angular height and distance to the point
+ * @param angled_height The height as returned by the camera that is positioned in an angle
+ * @param angled_distance Distance as returned by the camera that is positioned in and angle
+ * @return the vertical distance from camera to the point.
+ */
 double get_actual_height(double angled_height, double angled_distance) {
-    double angle_rad = 15 * 0.0174533; // 20 * 0.0174533
+    double angle_rad = 23 * 0.0174533; // 32.5
 
     double yb = angled_height / cos(angle_rad);
     double z2 = sin(angle_rad) * yb;
@@ -187,8 +194,16 @@ double get_actual_height(double angled_height, double angled_distance) {
     return (yb + yt);
 }
 
+/** VIJU
+ * @brief Calculate the horizontal distance given the angular height and distance and the actual height to the point
+ * @param angled_height The height as returned by the camera that is positioned in an angle
+ * @param angled_distance Distance as returned by the camera that is positioned in and angle
+ * @param actual_height actual vertical height
+ * @return the horizontal distance from camera to the point.
+ */
+
 double get_actual_distance(double angled_height, double angled_distance, double actual_height) {
-    double angle_rad = 15 * 0.0174533; // 20 * 0.0174533
+    double angle_rad = 23 * 0.0174533; // 32.5
 
     double actual_angle_rad = atan(angled_height / angled_distance) + angle_rad;
     double actual_distance = actual_height / tan (actual_angle_rad);
@@ -197,7 +212,7 @@ double get_actual_distance(double angled_height, double angled_distance, double 
     return actual_distance;
 }
 
-/**
+/** VIJU
  * @brief Calculate the actual vertical height of the given point from the camera and the horizontal
  * distance of the point from the camera
  * @param image_x x coordinate of the 2D point in the depth frame
@@ -221,10 +236,21 @@ void get_actual_height_and_distance(float image_x, float image_y, rs2::depth_fra
      }
 }
 
+/** VIJU
+ * @brief Finds the point where curb starts. This is done by checking the vertical height to the points
+ * along the y axis of the depth image. If the height difference is around the height of a curb, then it
+ * is considered as a curb.
+ * @param height height of the depth image (2D)
+ * @param image_x x coordinate of the image where to check for curb
+ * @param depth_frame
+ * @param DepthIntrinsics Intrincid values of depth image
+ * @param image This is used for writing the values (for debug purposes)
+ * @return
+ */
 cv::Point get_curb_point(int height, double image_x, rs2::depth_frame depth_frame, rs2_intrinsics DepthIntrinsics, cv::Mat& image) {
     const int IMAGE_X_STEP_SIZE = 15;
     const int CAMERA_BOTTOM_OFFSET = 60;
-    const double GROUD_HEIGHT = 2.0; // 1.7
+    const double GROUD_HEIGHT = 1.66; // 1.90
     const double DISTANCE_MAX = 6.0;
     const double DISTANCE_MIN = 4.2;
     const double CURB_HEIGHT_MAX = 0.172;
@@ -272,7 +298,12 @@ cv::Point get_curb_point(int height, double image_x, rs2::depth_frame depth_fram
 
 }
 
-void draw_fitted_line(cv::Mat& image, std::vector<cv::Point> curb_points, int width, int height) {
+/** VIJU
+ * @brief Uses OpenCV to draw a line using line fitting through the given points
+ * @param image RGB image to draw the line on
+ * @param curb_points The points used for line fitting
+ */
+void draw_fitted_line(cv::Mat& image, std::vector<cv::Point> curb_points) {
     cv::Point pt1, pt2;
     cv::Vec4f line;
     float d, t;
@@ -289,13 +320,15 @@ void draw_fitted_line(cv::Mat& image, std::vector<cv::Point> curb_points, int wi
     }
 }
 
-/*
-    Draws the edge of the curb
-*/
+/** VIJU
+ * @brief Checks the depth image from left to right to see the curb edges
+ * @param image RGB image to draw/mark curb
+ * @param depth_frame
+ * @param DepthIntrinsics
+ */
 void draw_curb(
     cv::Mat & image,
     rs2::depth_frame depth_frame,
-    rs2::points points,
     rs2_intrinsics DepthIntrinsics
 )
 {
@@ -316,7 +349,7 @@ void draw_curb(
         curb_points.push_back(pt);
         cv::circle(image, pt, 3, red, 2);
     }
-    draw_fitted_line(image, curb_points, width, height);
+    draw_fitted_line(image, curb_points);
 }
 
 /*
@@ -343,13 +376,18 @@ void draw_detector_overlay(
     cv::addWeighted( overlay, alpha, roi, 1 - alpha, 0, roi );   // roi = overlay * alpha + roi * (1-alpha) + 0
 }
 
+void save_image(cv::Mat & image, int frame_no) {
+    char buffer [50];
+    sprintf (buffer, "./images/frame_no_%04d.png", frame_no);
+
+    imwrite( buffer, image );
+    printf ("Saved [%s]\n",buffer);
+}
 
 int main(int argc, char * argv[]) try
 {
     // Declare pointcloud object, for calculating pointclouds and texture mappings
     rs2::pointcloud pc;
-    // We want the points object to be persistent so we can display the last cloud when a frame drops
-    rs2::points points;
 
     // Decimation filter reduces the amount of data (while preserving best samples)
     rs2::decimation_filter dec;
@@ -387,7 +425,7 @@ int main(int argc, char * argv[]) try
     // rs2::pipeline pipe;
     // pipe.start();
 
-    // Stream from recording // Viju
+    // Stream from recording // VIJU
 LOG(INFO) << "Before file load";
     rs2::pipeline pipe;
     rs2::config cfg;
@@ -396,7 +434,7 @@ LOG(INFO) << "Before file load";
     
     // enable file playback with playback repeat disabled    
     // realsense_20200427_171437.bag
-    cfg.enable_device_from_file("/home/osboxes/rosbags/recordings/20200501_173833.bag", false);
+    cfg.enable_device_from_file("/home/osboxes/rosbags/recordings/rs_native_2020-05-21-21-10-34.bag", false); // rs_native_2020-05-18-14-56-38.bag
     
     // start pipeline and get device
     pipeline_profile = pipe.start(cfg);
@@ -452,7 +490,7 @@ LOG(INFO) << "After file load";
     uint64 last_frame_number = 0;
     high_resolution_clock::time_point switch_time = high_resolution_clock::now();
 
-	rs2::colorizer color_map;  //Viju
+    rs2::colorizer color_map;  //Viju
     while( cv::getWindowProperty( window_name, cv::WND_PROP_AUTOSIZE ) >= 0 )
     {
         // Wait for the next set of frames
@@ -464,8 +502,6 @@ LOG(INFO) << "After file load";
 		continue;
 	}
 
-        // Make sure the frames are spatially aligned (ORIGINAL)
- //       frames = align_to.process( frames );
         // First make the frames spatially aligned
         frames = frames.apply_filter(align_to);
 /*
@@ -520,20 +556,20 @@ LOG(INFO) << "After file load";
         p_detector->submit_request();
 
         // MAIN DETECTION
-//        detect_objects( image, results, *p_labels, id, objects );
+        detect_objects( image, results, *p_labels, id, objects );
 
         // Keep it alive so we can actually process pieces of it once we have the results
         prev_image = image;
 
         // Tell pointcloud object to map to this color frame
         pc.map_to(color_frame);
-        // Generate the pointcloud and texture mappings
-        points = pc.calculate(depth_frame);
+
 
         // Display the results (from the last frame) as rectangles on top (of the current frame)
-//        draw_objects( image, depth_frame, objects );
-//        draw_detector_overlay( image, current_detector, switch_time );
-        draw_curb( image, depth_frame, points, DepthIntrinsics );
+        draw_objects( image, depth_frame, objects );
+        draw_detector_overlay( image, current_detector, switch_time );
+//        draw_curb( image, depth_frame, DepthIntrinsics ); // VIJU
+        save_image(image, depth_frame.get_frame_number());
         imshow( window_name, image );
 
         // Handle the keyboard before moving to the next frame
@@ -553,6 +589,7 @@ LOG(INFO) << "After file load";
             }
             switch_time = high_resolution_clock::now();
         }
+
     }
 
     return EXIT_SUCCESS;
