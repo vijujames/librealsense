@@ -60,9 +60,12 @@ int main(int argc, char * argv[]) try
             std::cout << "Turned on advanced mode!" << std::endl;
         }
         auto depth_table = advanced_mode_dev.get_depth_table();
+        std::cout << "depthClampMin before : " << depth_table.depthClampMin << std::endl;
         std::cout << "depthClampMax before : " << depth_table.depthClampMax << std::endl;
-        depth_table.depthClampMax = 10000; // 10m00 if depth unit at 0.001
+        depth_table.depthClampMin = 100; // .1m000 if depth unit at 0.001
+        depth_table.depthClampMax = 10000; // 10m000 if depth unit at 0.001
         advanced_mode_dev.set_depth_table(depth_table);
+        std::cout << "depthClampMin changed to : " << depth_table.depthClampMin << std::endl;
         std::cout << "depthClampMax changed to : " << depth_table.depthClampMax << std::endl;
     }
 
