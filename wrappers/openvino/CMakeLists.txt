@@ -47,7 +47,7 @@ set( ELPP_FILES
 include(dl_vino_model.cmake)
 
 # List all the specific examples for OpenVINO
-add_subdirectory(face)
-add_subdirectory(dnn)
+#add_subdirectory(face)
+#add_subdirectory(dnn)
 add_subdirectory(curb)
 add_subdirectory(dominant_plane)
