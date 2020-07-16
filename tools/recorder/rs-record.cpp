@@ -24,15 +24,25 @@ int main(int argc, char * argv[]) try
     ValueArg<int>    time("t", "Time", "Amount of time to record (in seconds)", false, 10, "");
     ValueArg<std::string> out_file("f", "FullFilePath", "the file where the data will be saved to", false, "test.bag", "");
     ValueArg<float>    visual_preset("p", "VisualPreset", "0-Custom/1-Default/2-Hand/3-HighAccuracy/4-HighDensity/5-MediumDensity/6-RemoveIrPattern", false, 4.0, "");
+    ValueArg<int>    color_width("x", "ColorWidth", "Width of Color frame", false, 640, "");
+    ValueArg<int>    color_height("y", "ColorHeight", "Height of Color frame", false, 480, "");
+    ValueArg<int>    depth_width("i", "DepthWidth", "Width of Depth frame", false, 848, "");
+    ValueArg<int>    depth_height("j", "DepthHeight", "Height of Depth frame", false, 480, "");
 
     cmd.add(time);
     cmd.add(out_file);
     cmd.add(visual_preset);
+    cmd.add(color_width);
+    cmd.add(color_height);
+    cmd.add(depth_width);
+    cmd.add(depth_height);
     cmd.parse(argc, argv);
 
     rs2::pipeline pipe;
     rs2::config cfg;
 
+    cfg.enable_stream(RS2_STREAM_COLOR, -1, color_width.getValue(), color_height.getValue(), rs2_format::RS2_FORMAT_RGB8, 30);
+    cfg.enable_stream(RS2_STREAM_DEPTH, -1, depth_width.getValue(), depth_height.getValue(), rs2_format::RS2_FORMAT_ANY, 30);
     cfg.enable_record_to_file(out_file.getValue());
 
     std::mutex m;
